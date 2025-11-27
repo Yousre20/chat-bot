@@ -1,0 +1,6 @@
+streamlit
+transformers>=4.0.0
+sentence-transformers
+torch
+faiss-cpu
+huggingface-hub
