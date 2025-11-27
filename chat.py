@@ -85,5 +85,4 @@ Answer:
     else:
         st.markdown("**Chatbot:** Sorry, I couldn't find an answer.")
 
-!streamlit run /usr/local/lib/python3.12/dist-packages/colab_kernel_launcher.py
 
