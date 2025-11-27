@@ -12,7 +12,7 @@ EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GEN_MODEL = "google/flan-t5-small"   # أو أي نموذج نصي متاح في HF Inference
 
 # HF client from Streamlit secrets
-HF_TOKEN = st.secrets.get("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", None)
+HF_TOKEN = st.secrets.get("HF_TOKEN", None)
 if not HF_TOKEN:
     st.error("HF_TOKEN missing in Streamlit secrets. Go to Settings → Secrets and add HF_TOKEN.")
     st.stop()
