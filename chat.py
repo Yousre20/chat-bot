@@ -16,7 +16,7 @@ st.title("🏦 Banque Masr Intelligent Assistant")
 
 # --- Constants ---
 MODEL_ID = 'HuggingFaceH4/zephyr-7b-beta'
-DATA_PATH = "data/BankFAQs.csv" # Ensure your CSV is in a 'data' folder
+DATA_PATH = "BankFAQs.csv" # Ensure your CSV is in a 'data' folder
 
 # --- 1. Load Resources (Cached) ---
 
