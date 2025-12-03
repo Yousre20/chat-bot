@@ -17,7 +17,6 @@ st.set_page_config(page_title="Banque Masr AI", page_icon="🏦")
 st.title("🏦 Banque Masr Assistant (Pure Python)")
 
 # Constants
-# We use Flan-T5 Large because it is excellent for RAG and free
 REPO_ID = "google/flan-t5-large"
 CHROMA_PATH = "./chroma_db_data"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -31,15 +30,10 @@ else:
         st.warning("Please add your Hugging Face Token.")
         st.stop()
 
-# --- 5. Core Functions (No LangChain) ---
+# --- 5. Core Functions ---
 
 @st.cache_resource
 def setup_vector_db():
-    """
-    1. Loads the CSV.
-    2. Embeds the text using SentenceTransformers.
-    3. Stores it in ChromaDB.
-    """
     # A. Locate File
     files = ["data/BankFAQs.csv", "BankFAQs.csv"]
     file_path = next((f for f in files if os.path.exists(f)), None)
@@ -52,23 +46,22 @@ def setup_vector_db():
     embedding_model = SentenceTransformer(EMBEDDING_MODEL)
     chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 
-    # C. Reset Collection (Prevent Duplicates/Corruption)
+    # C. Reset Collection (The Fix: Catch ALL errors)
     try:
         chroma_client.delete_collection("banque_masr")
-    except ValueError:
-        pass # Collection didn't exist, which is fine
+    except Exception:
+        pass # If it doesn't exist, just ignore it and move on
 
+    # Create new collection
     collection = chroma_client.create_collection(name="banque_masr")
 
     # D. Process Data
     df = pd.read_csv(file_path)
-    # Create a single string for each FAQ
     documents = df.apply(lambda row: f"Question: {row['Question']}\nAnswer: {row['Answer']}", axis=1).tolist()
     ids = [str(i) for i in range(len(documents))]
-    metadatas = [{"class": row["Class"]} for _, row in df.iterrows()]
+    metadatas = [{"class": str(row["Class"])} for _, row in df.iterrows()]
 
     # E. Embed and Add to DB
-    # SentenceTransformer encodes the text locally (CPU)
     embeddings = embedding_model.encode(documents).tolist()
     
     collection.add(
@@ -81,29 +74,21 @@ def setup_vector_db():
     return collection, embedding_model
 
 def get_context(query, collection, embedding_model):
-    """
-    Retrieves the 3 most relevant FAQs for the user's query.
-    """
-    # 1. Turn user query into numbers
     query_embedding = embedding_model.encode([query]).tolist()
     
-    # 2. Search DB
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=3
     )
     
-    # 3. Join the results into a single string
-    context_text = "\n\n".join(results['documents'][0])
-    return context_text
+    # Chroma returns a list of lists, we grab the first list
+    if results['documents']:
+        return "\n\n".join(results['documents'][0])
+    return ""
 
 def query_llm(context, question):
-    """
-    Sends the prompt to Hugging Face API directly.
-    """
     client = InferenceClient(token=HF_TOKEN)
     
-    # Simple, direct prompt structure
     prompt = f"""Use the following context to answer the question. 
 If the answer is not in the context, say "I don't know".
 
@@ -144,17 +129,12 @@ for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
 if prompt := st.chat_input():
-    # 1. Show User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
-    # 2. Generate Answer
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            # Step A: Get relevant documents
             context = get_context(prompt, collection, embedding_model)
-            
-            # Step B: Ask the LLM
             answer = query_llm(context, prompt)
             
             st.write(answer)
