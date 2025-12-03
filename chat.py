@@ -5,15 +5,20 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 # --- 2. Imports ---
 import streamlit as st
-import pandas as pd
 import os
-from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-# NEW: Modern LangChain Imports
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import PromptTemplate
-from langchain_core.documents import Document
+import shutil # NEW: Needed to delete old database files
+import pandas as pd
+
+try:
+    from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
+    from langchain_chroma import Chroma
+    from langchain.chains import create_retrieval_chain
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+    from langchain_core.prompts import PromptTemplate
+    from langchain_core.documents import Document
+except ImportError as e:
+    st.error(f"❌ Library Missing: {e}. Please ensure 'requirements.txt' contains 'langchain', 'langchain-huggingface', and 'langchain-chroma'.")
+    st.stop()
 
 # --- 3. Setup & Configuration ---
 st.set_page_config(page_title="Banque Masr AI Assistant", page_icon="🏦", layout="centered")
@@ -21,6 +26,7 @@ st.title("🏦 Banque Masr Intelligent Assistant")
 
 # Constants
 REPO_ID = "google/flan-t5-large"
+CHROMA_PATH = "./chroma_db_data" # Specific folder for the DB
 
 # --- 4. Secrets Handling ---
 if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
@@ -51,6 +57,11 @@ def load_data_and_vectordb():
         return None
 
     try:
+        # NEW: Self-Cleaning! 
+        # Delete the old database directory if it exists to fix "no such table" errors
+        if os.path.exists(CHROMA_PATH):
+            shutil.rmtree(CHROMA_PATH)
+
         bank = pd.read_csv(file_path)
         bank["content"] = bank.apply(lambda row: f"Question: {row['Question']}\nAnswer: {row['Answer']}", axis=1)
         
@@ -60,9 +71,11 @@ def load_data_and_vectordb():
 
         hg_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         
+        # Create fresh DB
         vector_db = Chroma.from_documents(
             documents=documents,
             embedding=hg_embeddings,
+            persist_directory=CHROMA_PATH, # Force it into our clean folder
             collection_name="chatbot_BankMasr"
         )
         return vector_db
@@ -94,7 +107,6 @@ with st.spinner("Initializing AI Brain..."):
 if vector_db is None or llm is None:
     st.stop()
 
-# Template uses {input} instead of {question} for the new chain
 template = """Use the following pieces of context to answer the question at the end. 
 If the answer is not in the context, just say that you don't know, don't try to make up an answer.
 
@@ -107,11 +119,10 @@ Answer:"""
 PROMPT = PromptTemplate.from_template(template)
 retriever = vector_db.as_retriever(search_kwargs={"k": 3})
 
-# Modern Chain Construction
 question_answer_chain = create_stuff_documents_chain(llm, PROMPT)
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-# --- 7. Chat Interface (Native Streamlit) ---
+# --- Chat Interface ---
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Welcome to Banque Masr! How can I help you today?"}]
 
@@ -126,10 +137,8 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                # Invoke using "input" key
                 response = rag_chain.invoke({"input": prompt})
                 result = response["answer"]
-                
                 st.markdown(result)
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
