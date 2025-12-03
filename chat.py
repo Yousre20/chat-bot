@@ -8,6 +8,10 @@ import streamlit as st
 import os
 import shutil
 import pandas as pd
+from streamlit_chat import message
+# FIXED: Use standard LangChain imports
+from langchain_classic.chains import ConversationalRetrievalChain
+from langchain_classic.memory import ConversationBufferMemory
 
 # This try block handles missing libraries gracefully
 try:
@@ -142,4 +146,5 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+
 
