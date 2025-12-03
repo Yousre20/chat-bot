@@ -1,4 +1,4 @@
-# --- 1. Database Hack ---
+# --- 1. Database Hack (Required for Streamlit Cloud) ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -18,17 +18,16 @@ st.title("🏦 Banque Masr Assistant")
 
 # Constants
 REPO_ID = "google/flan-t5-large"
-API_URL = f"https://api-inference.huggingface.co/models/{REPO_ID}"
+# FIXED: Updated URL from 'api-inference' to 'router'
+API_URL = f"https://router.huggingface.co/models/{REPO_ID}"
 CHROMA_PATH = "./chroma_db_data"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
-# --- 4. Secrets Handling (FIXED: Always shows the box) ---
+# --- 4. Secrets Handling (Side Bar) ---
 with st.sidebar:
     st.header("Settings")
-    # Always show the input box, even if secrets exist
     user_token = st.text_input("Hugging Face Token", type="password")
 
-    # Determine which token to use
     if user_token:
         HF_TOKEN = user_token
     elif "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
@@ -99,6 +98,7 @@ Answer:"""
 
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
+        
         if response.status_code != 200:
             return f"⚠️ API Error {response.status_code}: {response.text}"
         
