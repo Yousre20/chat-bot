@@ -1,4 +1,4 @@
-# --- 1. Database Hack (Required for Streamlit Cloud) ---
+# --- 1. Database Hack ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -8,22 +8,21 @@ import streamlit as st
 import pandas as pd
 import os
 import shutil
-import requests
 import chromadb
 from sentence_transformers import SentenceTransformer
+from huggingface_hub import InferenceClient # <--- Official Client
 
 # --- 3. Configuration ---
 st.set_page_config(page_title="Banque Masr AI", page_icon="🏦")
 st.title("🏦 Banque Masr Assistant")
 
 # Constants
-REPO_ID = "google/flan-t5-large"
-# FIXED: Updated URL from 'api-inference' to 'router'
-API_URL = f"https://router.huggingface.co/models/{REPO_ID}"
+# We use Flan-T5-Base. It is smaller, faster, and almost never fails on the free tier.
+REPO_ID = "google/flan-t5-base"
 CHROMA_PATH = "./chroma_db_data"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
-# --- 4. Secrets Handling (Side Bar) ---
+# --- 4. Secrets Handling ---
 with st.sidebar:
     st.header("Settings")
     user_token = st.text_input("Hugging Face Token", type="password")
@@ -44,7 +43,7 @@ def setup_vector_db():
     file_path = next((f for f in files if os.path.exists(f)), None)
     
     if not file_path:
-        st.error("❌ 'BankFAQs.csv' not found. Please upload it to GitHub.")
+        st.error("❌ 'BankFAQs.csv' not found.")
         return None, None
 
     embedding_model = SentenceTransformer(EMBEDDING_MODEL)
@@ -76,7 +75,10 @@ def get_context(query, collection, embedding_model):
     return ""
 
 def query_llm(context, question):
-    prompt = f"""Answer the question based strictly on the context below.
+    # Initialize the Official Client
+    client = InferenceClient(token=HF_TOKEN)
+    
+    prompt = f"""Answer based on context.
 
 Context:
 {context}
@@ -86,30 +88,19 @@ Question:
 
 Answer:"""
 
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 512,
-            "temperature": 0.1,
-            "return_full_text": False
-        }
-    }
-
     try:
-        response = requests.post(API_URL, headers=headers, json=payload)
-        
-        if response.status_code != 200:
-            return f"⚠️ API Error {response.status_code}: {response.text}"
-        
-        output = response.json()
-        if isinstance(output, list) and "generated_text" in output[0]:
-            return output[0]["generated_text"]
-        else:
-            return str(output)
-            
+        # Use the official text_generation method
+        # This handles the URL routing automatically
+        response = client.text_generation(
+            model=REPO_ID,
+            prompt=prompt,
+            max_new_tokens=512,
+            temperature=0.1,
+            seed=42
+        )
+        return response
     except Exception as e:
-        return f"Error connecting to AI: {e}"
+        return f"Error: {e}"
 
 # --- 6. App Logic ---
 
