@@ -67,7 +67,8 @@ def load_llm():
         max_new_tokens=512,
         do_sample=True,
         temperature=0.7,
-        repetition_penalty=1.1
+        repetition_penalty=1.1,
+        task="conversational"
     )
     return llm
 
