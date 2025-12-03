@@ -9,12 +9,13 @@ import pandas as pd
 import os
 import shutil
 
-# Modern LangChain Imports
+# Modern Imports (These WORK with the requirements above)
 from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain.chains import create_retrieval_chain
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.documents import Document
 
 # --- 3. Page Config ---
@@ -64,7 +65,7 @@ def load_resources():
     llm = HuggingFaceEndpoint(
         repo_id=REPO_ID, 
         task="text2text-generation", 
-        temperature=0.1,
+        temperature=0.1, 
         max_new_tokens=512
     )
     
@@ -77,39 +78,48 @@ with st.spinner("Starting AI..."):
 if not vector_db or not llm:
     st.stop()
 
-# --- 8. The New Chain (Modern Method) ---
-template = """Answer the question based ONLY on the context below.
+# --- 8. The Modern Chain ---
 
-Context: {context}
+# A. Search Query Generator (Rewrites user question based on history)
+context_prompt = ChatPromptTemplate.from_messages([
+    ("system", "Given a chat history and the latest user question, formulate a standalone question which can be understood without the chat history. Do NOT answer the question, just reformulate it."),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+history_retriever = create_history_aware_retriever(llm, vector_db.as_retriever(search_kwargs={"k": 2}), context_prompt)
 
-Question: {input}
-
-Answer:"""
-
-PROMPT = PromptTemplate.from_template(template)
-
-# Create the chain using the new 'create' functions
-question_answer_chain = create_stuff_documents_chain(llm, PROMPT)
-rag_chain = create_retrieval_chain(vector_db.as_retriever(search_kwargs={"k": 2}), question_answer_chain)
+# B. Question Answering Chain
+qa_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant for Banque Masr. Answer the question based ONLY on the following context:\n\n{context}"),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+rag_chain = create_retrieval_chain(history_retriever, question_answer_chain)
 
 # --- 9. Chat UI ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "How can I help you?"}]
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+for msg in st.session_state.chat_history:
+    role = "user" if isinstance(msg, HumanMessage) else "assistant"
+    st.chat_message(role).write(msg.content)
 
 if prompt := st.chat_input():
     st.chat_message("user").write(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                # The new chain expects 'input', not 'question'
-                response = rag_chain.invoke({"input": prompt})
+                response = rag_chain.invoke({
+                    "input": prompt,
+                    "chat_history": st.session_state.chat_history
+                })
                 output = response["answer"]
                 st.write(output)
-                st.session_state.messages.append({"role": "assistant", "content": output})
+                
+                # Save History
+                st.session_state.chat_history.append(HumanMessage(content=prompt))
+                st.session_state.chat_history.append(AIMessage(content=output))
             except Exception as e:
                 st.error(f"Error: {e}")
