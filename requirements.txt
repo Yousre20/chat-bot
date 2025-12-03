@@ -2,6 +2,6 @@ streamlit
 pandas
 chromadb
 sentence-transformers
-huggingface-hub
+huggingface-hub>=0.27.0
 python-dotenv
 pysqlite3-binary
