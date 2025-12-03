@@ -1,32 +1,4 @@
-# --- 0. FORCE INSTALL (The "Nuclear" Fix) ---
-import os
-import subprocess
-import sys
-
-# Function to install libraries if missing
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# Check if langchain is installed, if not, force install EVERYTHING
-try:
-    import langchain
-    import pysqlite3
-except ImportError:
-    print("⚠️ Libraries missing. Force installing... (This takes 1 minute)")
-    install("streamlit")
-    install("pandas")
-    install("langchain")
-    install("langchain-community")
-    install("langchain-huggingface")
-    install("langchain-chroma")
-    install("sentence-transformers")
-    install("chromadb")
-    install("python-dotenv")
-    install("pysqlite3-binary")
-    install("huggingface-hub")
-    print("✅ Installation complete.")
-
-# --- 1. Database Fix ---
+# --- 1. Database Fix (Must be at the very top) ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -34,12 +6,15 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 # --- 2. Imports ---
 import streamlit as st
 import pandas as pd
+import os
 import shutil
 
+# Modern LangChain Imports
 from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain.chains import RetrievalQA # Using the simplest, most stable chain
-from langchain.prompts import PromptTemplate
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import PromptTemplate
 from langchain_core.documents import Document
 
 # --- 3. Page Config ---
@@ -47,7 +22,6 @@ st.set_page_config(page_title="Banque Masr AI", page_icon="🏦")
 st.title("🏦 Banque Masr Assistant")
 
 # --- 4. Constants ---
-# Using Flan-T5 because it works 100% on the free API without "Task" errors
 REPO_ID = "google/flan-t5-large"
 CHROMA_PATH = "./chroma_db_data"
 
@@ -64,16 +38,16 @@ else:
 
 # --- 6. Load Data ---
 @st.cache_resource
-def load_db():
+def load_resources():
     # 1. Locate File
     files = ["data/BankFAQs.csv", "BankFAQs.csv"]
     file_path = next((f for f in files if os.path.exists(f)), None)
     
     if not file_path:
         st.error("❌ 'BankFAQs.csv' not found.")
-        return None
+        return None, None
 
-    # 2. Reset DB (Fixes 'no such table' error)
+    # 2. Reset DB (Prevents corruption)
     if os.path.exists(CHROMA_PATH):
         shutil.rmtree(CHROMA_PATH)
 
@@ -84,42 +58,39 @@ def load_db():
 
     # 4. Vector DB
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return Chroma.from_documents(docs, embeddings, persist_directory=CHROMA_PATH)
-
-@st.cache_resource
-def load_llm():
-    return HuggingFaceEndpoint(
+    vector_db = Chroma.from_documents(docs, embeddings, persist_directory=CHROMA_PATH)
+    
+    # 5. Load LLM
+    llm = HuggingFaceEndpoint(
         repo_id=REPO_ID, 
         task="text2text-generation", 
         temperature=0.1,
         max_new_tokens=512
     )
+    
+    return vector_db, llm
 
 # --- 7. App Logic ---
-with st.spinner("Starting AI (This might take 2 mins first time)..."):
-    db = load_db()
-    llm = load_llm()
+with st.spinner("Starting AI..."):
+    vector_db, llm = load_resources()
 
-if not db or not llm:
+if not vector_db or not llm:
     st.stop()
 
-# --- 8. The Chain (RetrievalQA - The most stable one) ---
+# --- 8. The New Chain (Modern Method) ---
 template = """Answer the question based ONLY on the context below.
 
 Context: {context}
 
-Question: {question}
+Question: {input}
 
 Answer:"""
 
-PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
+PROMPT = PromptTemplate.from_template(template)
 
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff",
-    retriever=db.as_retriever(search_kwargs={"k": 2}),
-    chain_type_kwargs={"prompt": PROMPT}
-)
+# Create the chain using the new 'create' functions
+question_answer_chain = create_stuff_documents_chain(llm, PROMPT)
+rag_chain = create_retrieval_chain(vector_db.as_retriever(search_kwargs={"k": 2}), question_answer_chain)
 
 # --- 9. Chat UI ---
 if "messages" not in st.session_state:
@@ -135,8 +106,9 @@ if prompt := st.chat_input():
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                response = qa_chain.invoke(prompt)
-                output = response["result"] # RetrievalQA uses 'result'
+                # The new chain expects 'input', not 'question'
+                response = rag_chain.invoke({"input": prompt})
+                output = response["answer"]
                 st.write(output)
                 st.session_state.messages.append({"role": "assistant", "content": output})
             except Exception as e:
