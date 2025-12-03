@@ -10,29 +10,24 @@ import os
 import shutil
 import chromadb
 from sentence_transformers import SentenceTransformer
-from huggingface_hub import InferenceClient # <--- Official Client
+from huggingface_hub import InferenceClient
 
 # --- 3. Configuration ---
 st.set_page_config(page_title="Banque Masr AI", page_icon="🏦")
-st.title("🏦 Banque Masr Assistant")
+st.title("🏦 Banque Masr Assistant (Pure Python)")
 
 # Constants
-# We use Flan-T5-Base. It is smaller, faster, and almost never fails on the free tier.
-REPO_ID = "google/flan-t5-base"
+REPO_ID = "google/flan-t5-large"
 CHROMA_PATH = "./chroma_db_data"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # --- 4. Secrets Handling ---
-with st.sidebar:
-    st.header("Settings")
-    user_token = st.text_input("Hugging Face Token", type="password")
-
-    if user_token:
-        HF_TOKEN = user_token
-    elif "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
-        HF_TOKEN = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
-    else:
-        st.warning("⚠️ Please enter your token here to start.")
+if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
+    HF_TOKEN = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
+else:
+    HF_TOKEN = st.sidebar.text_input("Enter Hugging Face Token", type="password")
+    if not HF_TOKEN:
+        st.warning("Please add your Hugging Face Token.")
         st.stop()
 
 # --- 5. Core Functions ---
@@ -49,6 +44,8 @@ def setup_vector_db():
     embedding_model = SentenceTransformer(EMBEDDING_MODEL)
     chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 
+    # --- THE FIX IS HERE ---
+    # We catch generic Exception to handle both ValueError and NotFoundError
     try:
         chroma_client.delete_collection("banque_masr")
     except Exception:
@@ -75,7 +72,6 @@ def get_context(query, collection, embedding_model):
     return ""
 
 def query_llm(context, question):
-    # Initialize the Official Client
     client = InferenceClient(token=HF_TOKEN)
     
     prompt = f"""Answer based on context.
@@ -90,7 +86,6 @@ Answer:"""
 
     try:
         # Use the official text_generation method
-        # This handles the URL routing automatically
         response = client.text_generation(
             model=REPO_ID,
             prompt=prompt,
