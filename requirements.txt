@@ -1,9 +1,10 @@
 streamlit
 pandas
-langchain
-langchain-community
-langchain-huggingface
-langchain-chroma
+langchain==0.3.7
+langchain-community==0.3.5
+langchain-huggingface==0.1.2
+langchain-chroma==0.1.4
+langchain-core==0.3.15
 sentence-transformers
 chromadb
 python-dotenv
