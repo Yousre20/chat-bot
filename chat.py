@@ -20,7 +20,7 @@ st.title("🏦 Banque Masr Intelligent Assistant")
 
 # Constants
 # CHANGED: Switched to Mistral v0.3 which is more stable on the free API than Zephyr
-REPO_ID = "HuggingFaceH4/zephyr-7b-alpha"
+REPO_ID = "HuggingFaceH4/zephyr-7b-beta"
 DATA_PATH = "data/BankFAQs.csv" 
 
 # Secrets Handling
