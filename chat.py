@@ -1,4 +1,32 @@
-# --- 1. Database Fix (Must be at the very top) ---
+# --- 0. FORCE INSTALL (The "Nuclear" Fix) ---
+import os
+import subprocess
+import sys
+
+# Function to install libraries if missing
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Check if langchain is installed, if not, force install EVERYTHING
+try:
+    import langchain
+    import pysqlite3
+except ImportError:
+    print("⚠️ Libraries missing. Force installing... (This takes 1 minute)")
+    install("streamlit")
+    install("pandas")
+    install("langchain")
+    install("langchain-community")
+    install("langchain-huggingface")
+    install("langchain-chroma")
+    install("sentence-transformers")
+    install("chromadb")
+    install("python-dotenv")
+    install("pysqlite3-binary")
+    install("huggingface-hub")
+    print("✅ Installation complete.")
+
+# --- 1. Database Fix ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -6,16 +34,12 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 # --- 2. Imports ---
 import streamlit as st
 import pandas as pd
-import os
 import shutil
 
-# Standard Libraries
 from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import RetrievalQA # Using the simplest, most stable chain
+from langchain.prompts import PromptTemplate
 from langchain_core.documents import Document
 
 # --- 3. Page Config ---
@@ -23,6 +47,7 @@ st.set_page_config(page_title="Banque Masr AI", page_icon="🏦")
 st.title("🏦 Banque Masr Assistant")
 
 # --- 4. Constants ---
+# Using Flan-T5 because it works 100% on the free API without "Task" errors
 REPO_ID = "google/flan-t5-large"
 CHROMA_PATH = "./chroma_db_data"
 
@@ -37,10 +62,10 @@ else:
         st.warning("Please add your Hugging Face Token.")
         st.stop()
 
-# --- 6. Load Resources ---
+# --- 6. Load Data ---
 @st.cache_resource
-def load_data_and_db():
-    # File check
+def load_db():
+    # 1. Locate File
     files = ["data/BankFAQs.csv", "BankFAQs.csv"]
     file_path = next((f for f in files if os.path.exists(f)), None)
     
@@ -48,16 +73,16 @@ def load_data_and_db():
         st.error("❌ 'BankFAQs.csv' not found.")
         return None
 
-    # Reset DB
+    # 2. Reset DB (Fixes 'no such table' error)
     if os.path.exists(CHROMA_PATH):
         shutil.rmtree(CHROMA_PATH)
 
-    # Process Data
+    # 3. Process Data
     bank = pd.read_csv(file_path)
     bank["content"] = bank.apply(lambda row: f"Q: {row['Question']}\nA: {row['Answer']}", axis=1)
     docs = [Document(page_content=row["content"]) for _, row in bank.iterrows()]
 
-    # Vector DB
+    # 4. Vector DB
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return Chroma.from_documents(docs, embeddings, persist_directory=CHROMA_PATH)
 
@@ -71,67 +96,48 @@ def load_llm():
     )
 
 # --- 7. App Logic ---
-with st.spinner("Starting AI..."):
-    vector_db = load_data_and_db()
+with st.spinner("Starting AI (This might take 2 mins first time)..."):
+    db = load_db()
     llm = load_llm()
 
-if not vector_db or not llm:
+if not db or not llm:
     st.stop()
 
-# --- 8. The New Chain (Fixes Import Errors) ---
+# --- 8. The Chain (RetrievalQA - The most stable one) ---
+template = """Answer the question based ONLY on the context below.
 
-# 1. Contextualize Question Prompt (For History)
-contextualize_q_system_prompt = """Given a chat history and the latest user question 
-which might reference context in the chat history, formulate a standalone question 
-which can be understood without the chat history. Do NOT answer the question, 
-just reformulate it if needed and otherwise return it as is."""
+Context: {context}
 
-contextualize_q_prompt = ChatPromptTemplate.from_messages([
-    ("system", contextualize_q_system_prompt),
-    MessagesPlaceholder("chat_history"),
-    ("human", "{input}"),
-])
+Question: {question}
 
-# 2. History Aware Retriever
-history_aware_retriever = create_history_aware_retriever(
-    llm, vector_db.as_retriever(search_kwargs={"k": 2}), contextualize_q_prompt
+Answer:"""
+
+PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
+
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",
+    retriever=db.as_retriever(search_kwargs={"k": 2}),
+    chain_type_kwargs={"prompt": PROMPT}
 )
 
-# 3. Answer Prompt
-qa_system_prompt = """You are an assistant for Banque Masr. Use the following pieces of 
-retrieved context to answer the question. If you don't know the answer, say that you 
-don't know. Keep the answer concise.
-
-{context}"""
-
-qa_prompt = ChatPromptTemplate.from_messages([
-    ("system", qa_system_prompt),
-    MessagesPlaceholder("chat_history"),
-    ("human", "{input}"),
-])
-
-# 4. Final Chain
-question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
 # --- 9. Chat UI ---
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "How can I help you?"}]
 
-for msg in st.session_state.chat_history:
-    role = "user" if isinstance(msg, HumanMessage) else "assistant"
-    st.chat_message(role).write(msg.content)
+for msg in st.session_state.messages:
+    st.chat_message(msg["role"]).write(msg["content"])
 
 if prompt := st.chat_input():
     st.chat_message("user").write(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.chat_message("assistant"):
-        response = rag_chain.invoke({
-            "input": prompt,
-            "chat_history": st.session_state.chat_history
-        })
-        st.write(response["answer"])
-        
-    # Update History
-    st.session_state.chat_history.append(HumanMessage(content=prompt))
-    st.session_state.chat_history.append(AIMessage(content=response["answer"]))
+        with st.spinner("Thinking..."):
+            try:
+                response = qa_chain.invoke(prompt)
+                output = response["result"] # RetrievalQA uses 'result'
+                st.write(output)
+                st.session_state.messages.append({"role": "assistant", "content": output})
+            except Exception as e:
+                st.error(f"Error: {e}")
