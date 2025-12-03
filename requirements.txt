@@ -1,11 +1,1 @@
-streamlit
-pandas
-langchain
-langchain-community
-langchain-huggingface
-langchain-chroma
-sentence-transformers
-chromadb
-python-dotenv
-pysqlite3-binary
-huggingface-hub
+
