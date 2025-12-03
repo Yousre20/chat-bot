@@ -6,20 +6,19 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 # --- 2. Imports ---
 import streamlit as st
 import os
-import shutil # NEW: Needed to delete old database files
+import shutil
 import pandas as pd
 
+# This try block handles missing libraries gracefully
 try:
-# --- 2. Imports ---
-from streamlit_chat import message
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-# Imports for RAG and LLM setup
-from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_core.documents import Document
+    from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
+    from langchain_chroma import Chroma
+    from langchain.chains import create_retrieval_chain
+    from langchain.chains.combine_documents import create_stuff_documents_chain
+    from langchain_core.prompts import PromptTemplate
+    from langchain_core.documents import Document
 except ImportError as e:
-    st.error(f"❌ Library Missing: {e}. Please ensure 'requirements.txt' contains 'langchain', 'langchain-huggingface', and 'langchain-chroma'.")
+    st.error(f"❌ Library Missing: {e}. Please check requirements.txt")
     st.stop()
 
 # --- 3. Setup & Configuration ---
@@ -28,7 +27,7 @@ st.title("🏦 Banque Masr Intelligent Assistant")
 
 # Constants
 REPO_ID = "google/flan-t5-large"
-CHROMA_PATH = "./chroma_db_data" # Specific folder for the DB
+CHROMA_PATH = "./chroma_db_data"
 
 # --- 4. Secrets Handling ---
 if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
@@ -59,8 +58,7 @@ def load_data_and_vectordb():
         return None
 
     try:
-        # NEW: Self-Cleaning! 
-        # Delete the old database directory if it exists to fix "no such table" errors
+        # Clean old DB to prevent "no such table" errors
         if os.path.exists(CHROMA_PATH):
             shutil.rmtree(CHROMA_PATH)
 
@@ -73,11 +71,10 @@ def load_data_and_vectordb():
 
         hg_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         
-        # Create fresh DB
         vector_db = Chroma.from_documents(
             documents=documents,
             embedding=hg_embeddings,
-            persist_directory=CHROMA_PATH, # Force it into our clean folder
+            persist_directory=CHROMA_PATH,
             collection_name="chatbot_BankMasr"
         )
         return vector_db
@@ -124,7 +121,7 @@ retriever = vector_db.as_retriever(search_kwargs={"k": 3})
 question_answer_chain = create_stuff_documents_chain(llm, PROMPT)
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-# --- Chat Interface ---
+# --- 7. Chat Interface ---
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Welcome to Banque Masr! How can I help you today?"}]
 
@@ -145,6 +142,3 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
-
-
-
