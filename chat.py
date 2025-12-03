@@ -1,125 +1,140 @@
-# --- 1. Database Hack ---
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
-# --- 2. Imports ---
 import streamlit as st
 import pandas as pd
+import numpy as np
+import faiss
 import os
-import shutil
-import chromadb
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import InferenceClient
 
-# --- 3. Configuration ---
+# --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Banque Masr AI", page_icon="🏦")
-st.title("🏦 Banque Masr Assistant (Pure Python)")
+st.title("🏦 Banque Masr Assistant (Stable Version)")
 
 # Constants
-REPO_ID = "google/flan-t5-large"
-CHROMA_PATH = "./chroma_db_data"
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+DATA_FILE = "data/BankFAQs.csv" # Ensure this path matches your GitHub
+MODEL_ID = "google/flan-t5-large" # The most reliable free model for RAG
 
-# --- 4. Secrets Handling ---
+# --- 2. AUTHENTICATION ---
+# Check secrets first, then sidebar
 if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
     HF_TOKEN = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
 else:
     HF_TOKEN = st.sidebar.text_input("Enter Hugging Face Token", type="password")
-    if not HF_TOKEN:
-        st.warning("Please add your Hugging Face Token.")
-        st.stop()
 
-# --- 5. Core Functions ---
+if not HF_TOKEN:
+    st.warning("⚠️ Please enter your Hugging Face Token to continue.")
+    st.stop()
 
+# --- 3. THE BRAIN (Load & Index Data) ---
 @st.cache_resource
-def setup_vector_db():
-    files = ["data/BankFAQs.csv", "BankFAQs.csv"]
-    file_path = next((f for f in files if os.path.exists(f)), None)
+def initialize_engine():
+    """
+    Loads CSV, converts to numbers (embeddings), and builds a FAISS index.
+    This runs once and stays in memory. Zero database files to corrupt.
+    """
+    # A. Check for file
+    # We check root folder AND data folder to be safe
+    final_path = None
+    if os.path.exists(DATA_FILE):
+        final_path = DATA_FILE
+    elif os.path.exists("BankFAQs.csv"):
+        final_path = "BankFAQs.csv"
     
-    if not file_path:
-        st.error("❌ 'BankFAQs.csv' not found.")
-        return None, None
+    if not final_path:
+        st.error(f"❌ Critical Error: Could not find 'BankFAQs.csv'. Please upload it to GitHub.")
+        return None, None, None
 
-    embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-    chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
-
-    # --- THE FIX IS HERE ---
-    # We catch generic Exception to handle both ValueError and NotFoundError
+    # B. Load Data
     try:
-        chroma_client.delete_collection("banque_masr")
-    except Exception:
-        pass 
+        df = pd.read_csv(final_path)
+        # Create a clean list of text chunks
+        df['combined'] = "Question: " + df['Question'] + "\nAnswer: " + df['Answer']
+        documents = df['combined'].tolist()
+    except Exception as e:
+        st.error(f"❌ Error reading CSV: {e}")
+        return None, None, None
 
-    collection = chroma_client.create_collection(name="banque_masr")
-
-    df = pd.read_csv(file_path)
-    documents = df.apply(lambda row: f"Question: {row['Question']}\nAnswer: {row['Answer']}", axis=1).tolist()
-    ids = [str(i) for i in range(len(documents))]
-    metadatas = [{"class": str(row["Class"])} for _, row in df.iterrows()]
-
-    embeddings = embedding_model.encode(documents).tolist()
-    collection.add(documents=documents, embeddings=embeddings, metadatas=metadatas, ids=ids)
+    # C. Load Embedding Model (The Translator)
+    # Using a small, fast model ideal for CPU
+    encoder = SentenceTransformer("all-MiniLM-L6-v2")
     
-    return collection, embedding_model
-
-def get_context(query, collection, embedding_model):
-    query_embedding = embedding_model.encode([query]).tolist()
-    results = collection.query(query_embeddings=query_embedding, n_results=3)
+    # D. Create Embeddings
+    embeddings = encoder.encode(documents)
     
-    if results['documents']:
-        return "\n\n".join(results['documents'][0])
-    return ""
+    # E. Build FAISS Index (The Search Engine)
+    # Dimension 384 is standard for MiniLM
+    index = faiss.IndexFlatL2(384) 
+    index.add(embeddings)
+    
+    return index, documents, encoder
 
-def query_llm(context, question):
+# --- 4. THE FUNCTIONS ---
+
+def retrieve_info(query, index, documents, encoder, k=3):
+    """Finds the top 3 most relevant FAQs"""
+    # Convert query to vector
+    query_vector = encoder.encode([query])
+    
+    # Search FAISS
+    # D = distances, I = indices (row numbers)
+    D, I = index.search(query_vector, k)
+    
+    # Fetch actual text
+    results = [documents[i] for i in I[0]]
+    return "\n\n".join(results)
+
+def generate_answer(context, question):
+    """Sends prompt to Hugging Face"""
     client = InferenceClient(token=HF_TOKEN)
     
-    prompt = f"""Answer based on context.
-
-Context:
-{context}
-
-Question: 
-{question}
-
-Answer:"""
+    system_prompt = """You are a helpful banking assistant for Banque Masr. 
+Answer the question based strictly on the context provided. 
+If the answer is not in the context, say 'I cannot find that information in my records'."""
+    
+    prompt = f"{system_prompt}\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 
     try:
-        # Use the official text_generation method
         response = client.text_generation(
-            model=REPO_ID,
+            model=MODEL_ID,
             prompt=prompt,
             max_new_tokens=512,
-            temperature=0.1,
+            temperature=0.1, # Keep it factual
             seed=42
         )
         return response
     except Exception as e:
-        return f"Error: {e}"
+        return f"⚠️ Model Error: {str(e)}"
 
-# --- 6. App Logic ---
+# --- 5. MAIN APP UI ---
 
-with st.spinner("Initializing AI Brain..."):
-    collection, embedding_model = setup_vector_db()
+# Load the engine (Cached)
+with st.spinner("Building Knowledge Base..."):
+    index, documents, encoder = initialize_engine()
 
-if not collection:
+if index is None:
     st.stop()
 
-# --- 7. Chat UI ---
-
+# Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Welcome to Banque Masr! How can I help you today?"}]
 
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-if prompt := st.chat_input():
+# User Input
+if prompt := st.chat_input("Ask about loans, accounts, or cards..."):
+    # Show user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
+    # Process
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            context = get_context(prompt, collection, embedding_model)
-            answer = query_llm(context, prompt)
+            # 1. Retrieve
+            context = retrieve_info(prompt, index, documents, encoder)
+            
+            # 2. Generate
+            answer = generate_answer(context, prompt)
+            
             st.write(answer)
             st.session_state.messages.append({"role": "assistant", "content": answer})
