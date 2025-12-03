@@ -12,7 +12,7 @@ import pandas as pd
 # This try block handles missing libraries gracefully
 try:
     from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
-    from langchain_chroma import Chroma
+    from langchain_community.vectorstores import Chroma
     from langchain.chains import create_retrieval_chain
     from langchain.chains.combine_documents import create_stuff_documents_chain
     from langchain_core.prompts import PromptTemplate
@@ -142,3 +142,4 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+
