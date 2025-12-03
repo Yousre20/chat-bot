@@ -17,6 +17,10 @@ try:
     from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
     from langchain_community.vectorstores import Chroma
     from langchain_core.documents import Document
+    import os
+
+
+
 except ImportError as e:
     st.error(f"❌ Library Missing: {e}. Please ensure 'requirements.txt' contains 'langchain', 'langchain-huggingface', and 'langchain-chroma'.")
     st.stop()
@@ -144,4 +148,5 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+
 
