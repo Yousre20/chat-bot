@@ -9,8 +9,10 @@ import pandas as pd
 import os
 from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+# NEW: Imports for the modern LangChain API
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import PromptTemplate
 from langchain_core.documents import Document
 
 # --- 3. Setup & Configuration ---
@@ -18,7 +20,7 @@ st.set_page_config(page_title="Banque Masr AI Assistant", page_icon="🏦", layo
 st.title("🏦 Banque Masr Intelligent Assistant")
 
 # Constants
-REPO_ID = "google/flan-t5-large" # Stable, free model
+REPO_ID = "google/flan-t5-large"
 
 # --- 4. Secrets Handling ---
 if "HUGGINGFACEHUB_API_TOKEN" in st.secrets:
@@ -35,7 +37,7 @@ else:
 
 @st.cache_resource
 def load_data_and_vectordb():
-    # Smart Path Checking: Checks both 'data/' folder and root folder
+    # Smart Path Checking
     possible_paths = ["data/BankFAQs.csv", "BankFAQs.csv"]
     file_path = None
     
@@ -92,20 +94,22 @@ with st.spinner("Initializing AI Brain..."):
 if vector_db is None or llm is None:
     st.stop()
 
+# NEW: Template uses {input} instead of {question}
 template = """Use the following pieces of context to answer the question at the end. 
 If the answer is not in the context, just say that you don't know, don't try to make up an answer.
 
 Context: {context}
 
-Question: {question}
+Question: {input}
 
 Answer:"""
 
-PROMPT = PromptTemplate(input_variables=["context", "question"], template=template)
+PROMPT = PromptTemplate.from_template(template)
 retriever = vector_db.as_retriever(search_kwargs={"k": 3})
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm, chain_type="stuff", retriever=retriever, chain_type_kwargs={"prompt": PROMPT}
-)
+
+# NEW: Modern Chain Construction
+question_answer_chain = create_stuff_documents_chain(llm, PROMPT)
+rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Welcome to Banque Masr! How can I help you today?"}]
@@ -121,8 +125,11 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                response = qa_chain.invoke(prompt)
-                st.markdown(response['result'])
-                st.session_state.messages.append({"role": "assistant", "content": response['result']})
+                # NEW: Invoke with "input" key and read "answer" key
+                response = rag_chain.invoke({"input": prompt})
+                result = response["answer"]
+                
+                st.markdown(result)
+                st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
