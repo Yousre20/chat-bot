@@ -11,7 +11,7 @@ import shutil
 
 # Standard LangChain Imports (No 'classic' or 'streamlit_chat' needed)
 from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import Chroma
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain_core.prompts import PromptTemplate
@@ -151,3 +151,4 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+
