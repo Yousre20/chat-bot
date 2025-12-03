@@ -10,17 +10,14 @@ import shutil # NEW: Needed to delete old database files
 import pandas as pd
 
 try:
-    from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
-    from langchain.chains import create_retrieval_chain
-    from langchain.chains.combine_documents import create_stuff_documents_chain
-    from langchain_core.prompts import PromptTemplate
-    from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
-    from langchain_community.vectorstores import Chroma
-    from langchain_core.documents import Document
-    import os
-
-
-
+# --- 2. Imports ---
+from streamlit_chat import message
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+# Imports for RAG and LLM setup
+from langchain_huggingface import HuggingFaceEndpoint, HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
 except ImportError as e:
     st.error(f"❌ Library Missing: {e}. Please ensure 'requirements.txt' contains 'langchain', 'langchain-huggingface', and 'langchain-chroma'.")
     st.stop()
@@ -148,5 +145,6 @@ if prompt := st.chat_input("Ask about loans, cards, or accounts..."):
                 st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
                 st.error(f"Error: {str(e)}")
+
 
 
